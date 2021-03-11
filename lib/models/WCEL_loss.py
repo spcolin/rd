@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from lib.core.config import cfg
+import torchvision
 
 
 class WCEL_Loss(nn.Module):
@@ -14,6 +15,23 @@ class WCEL_Loss(nn.Module):
         self.weight /= np.sum(self.weight, 1, keepdims=True)
 
     def forward(self, pred_logit, gt_bins, gt):
+
+        # print(pred_logit.shape)
+        # print(gt_bins.shape)
+        # print(gt.shape)
+        # gt_img=torchvision.transforms.ToPILImage()(gt[0])
+        # gt_img.show()
+        #
+        # mask=gt[0]>0
+        # mask=torchvision.transforms.ToPILImage()(mask.float())
+        # mask.show()
+
+        # mask=(gt>0).float().to(pred_logit.device)
+        #
+        # masked_pred_logit=pred_logit*mask.clone().detach()
+        # masked_gt_bins=gt_bins*mask.clone().detach()
+
+
         self.weight = torch.tensor(self.weight, dtype=torch.float32, device=pred_logit.device)
         classes_range = torch.arange(cfg.MODEL.DECODER_OUTPUT_C, device=gt_bins.device, dtype=gt_bins.dtype)
         log_pred = torch.nn.functional.log_softmax(pred_logit, 1)

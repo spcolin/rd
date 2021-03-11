@@ -37,15 +37,18 @@ def load_ckpt(args, model, optimizer=None, scheduler=None, val_err=[]):
     if os.path.isfile(args.load_ckpt):
         logger.info("loading checkpoint %s", args.load_ckpt)
         checkpoint = torch.load(args.load_ckpt, map_location=lambda storage, loc: storage, pickle_module=dill)
-        model.load_state_dict(checkpoint['model_state_dict'])
+
+        model.depth_model.load_state_dict(checkpoint['model_state_dict'])
+
         if args.resume:
-            args.batchsize = checkpoint['batch_size']
-            args.start_step = checkpoint['step']
-            args.start_epoch = checkpoint['epoch']
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            scheduler.load_state_dict(checkpoint['scheduler'])
-            if 'val_err' in checkpoint:  # For backward compatibility
-                val_err[0] = checkpoint['val_err']
+            if args.refine!=True:
+                args.batchsize = checkpoint['batch_size']
+                args.start_step = checkpoint['step']
+                args.start_epoch = checkpoint['epoch']
+                optimizer.load_state_dict(checkpoint['optimizer'])
+                scheduler.load_state_dict(checkpoint['scheduler'])
+                if 'val_err' in checkpoint:  # For backward compatibility
+                    val_err[0] = checkpoint['val_err']
         del checkpoint
         torch.cuda.empty_cache()
 
@@ -58,13 +61,25 @@ def save_ckpt(args, step, epoch, model, optimizer, scheduler, val_err={}):
     save_name = os.path.join(ckpt_dir, 'epoch%d_step%d.pth' %(epoch, step))
     if isinstance(model, nn.DataParallel):
         model = model.module
-    torch.save({
-        'step': step,
-        'epoch': epoch,
-        'batch_size': args.batchsize,
-        'scheduler': scheduler.state_dict(),
-        'val_err': val_err,
-        'model_state_dict': model.state_dict(),
-        'optimizer': optimizer.state_dict()},
-        save_name, pickle_module=dill)
-    logger.info('save model: %s', save_name)
+    if args.refine==True:
+        torch.save({
+            'step': step,
+            'epoch': epoch,
+            'batch_size': args.batchsize,
+            'scheduler': scheduler.state_dict(),
+            'val_err': val_err,
+            'model_state_dict': model.state_dict(),
+            'optimizer': optimizer.state_dict()},
+            save_name, pickle_module=dill)
+        logger.info('save model: %s', save_name)
+    else:
+        torch.save({
+            'step': step,
+            'epoch': epoch,
+            'batch_size': args.batchsize,
+            'scheduler': scheduler.state_dict(),
+            'val_err': val_err,
+            'model_state_dict': model.depth_model.state_dict(),
+            'optimizer': optimizer.state_dict()},
+            save_name, pickle_module=dill)
+        logger.info('save model: %s', save_name)

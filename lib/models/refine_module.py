@@ -82,7 +82,6 @@ class Residual(torch.nn.Module):
     def forward(self,input):
 
         feature=self.backbone(input)    #B*512*13*13
-
         up1=F.interpolate(feature,scale_factor=2,mode='bilinear',align_corners=True)    #B*512*26*26
         up1=self.up_layer1(up1) #B*256*26*26
         up1=F.interpolate(up1,scale_factor=2,mode='bilinear',align_corners=True)    #B*256*52*52
@@ -208,16 +207,23 @@ class Refine_module(torch.nn.Module):
         return resampled_depth
 
 
-    def forward(self,depth_tensor,img_tensor):
+    def forward(self,depth_tensor,img_tensor,enlarge=False):
 
-        mask=get_mask(img_tensor)
-        print(mask.shape)
+        if enlarge==True:
+            enlarged_img=torch.nn.functional.interpolate(img_tensor,[480,640],mode='bilinear')
+            enlarged_depth=torch.nn.functional.interpolate(depth_tensor,[480,640],mode='bilinear')
+        else:
+            enlarged_img=img_tensor
+            enlarged_depth=depth_tensor
 
-        residual_input=torch.cat((img_tensor,depth_tensor),1)
+        mask=get_mask(enlarged_img)
+
+        residual_input=torch.cat((enlarged_img,enlarged_depth),1)
         res=self.residual_net(residual_input)
-        compensate_res_depth=depth_tensor+res*mask
+        # print(res.shape)
+        compensate_res_depth=enlarged_depth+res*mask
 
-        resample_input=torch.cat((img_tensor,compensate_res_depth),1)
+        resample_input=torch.cat((enlarged_img,compensate_res_depth),1)
         resample_grid=self.resample_net(resample_input)
         resampled_depth=self.sample(resample_grid*(torch.stack([mask.squeeze(1),mask.squeeze(1)],3)),compensate_res_depth)
 

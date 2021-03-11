@@ -10,53 +10,63 @@ from lib.core.config import cfg
 from lib.models.RD_loss9 import RD_loss9
 from lib.models.refine_module import Refine_module
 from lib.models.refine_loss import Refine_loss
+from lib.models.refine_module2 import Refine_module2
+import torchvision
 
 
 class MetricDepthModel(nn.Module):
-    def __init__(self):
+    def __init__(self,refine=False):
         super(MetricDepthModel, self).__init__()
+        self.refine=refine
+
         self.loss_names = ['Weighted_Cross_Entropy', 'Virtual_Normal']
         self.depth_model = DepthModel()
 
-        # pretrained_path = "E:/pretrained/resnet18-5c106cde.pth"
-        # self.refine_model = Refine_module(pretrained_resnet18_path=pretrained_path)
+        if self.refine==True:
+            pretrained_path = "E:/pretrained/resnet18-5c106cde.pth"
+            self.refine_model = Refine_module(pretrained_resnet18_path=pretrained_path)
 
     def forward(self, data):
-        # Input data is a_real, predicted data is b_fake, groundtruth is b_real
-        self.a_real = data['A'].cuda()
-        self.b_fake_logit, self.b_fake_softmax = self.depth_model(self.a_real)
 
+        if self.refine==True:
+            # Input data is a_real, predicted data is b_fake, groundtruth is b_real
+            self.a_real = data['A'].cuda()
+            self.b_fake_logit, self.b_fake_softmax = self.depth_model(self.a_real)
 
-        # pred_depth = bins_to_depth(self.b_fake_softmax)
-        # refined_depth = self.refine_model(pred_depth.detach(), self.a_real)
+            pred_depth = bins_to_depth(self.b_fake_softmax)
+            refined_depth = self.refine_model(pred_depth.detach(), self.a_real)
 
-        # return {'b_fake_logit': self.b_fake_logit, 'b_fake_softmax': self.b_fake_softmax,
-        #         "refined_depth": refined_depth}
-        return {'b_fake_logit': self.b_fake_logit, 'b_fake_softmax': self.b_fake_softmax}
+            return {"refined_depth": refined_depth}
+
+        else:
+            # Input data is a_real, predicted data is b_fake, groundtruth is b_real
+            self.a_real = data['A'].cuda()
+            self.b_fake_logit, self.b_fake_softmax = self.depth_model(self.a_real)
+
+            return {'b_fake_logit': self.b_fake_logit, 'b_fake_softmax': self.b_fake_softmax}
 
 
     def inference(self, data):
         with torch.no_grad():
-            out = self.forward(data)
 
-            if cfg.MODEL.PREDICTION_METHOD == 'classification':
-                pred_depth = bins_to_depth(out['b_fake_softmax'])
-            elif cfg.MODEL.PREDICTION_METHOD == 'regression':
-                # for regression methods
-                pred_depth = torch.nn.functional.sigmoid(out['b_fake_logit'])
+            if self.refine==True:
+                out = self.forward(data)['refined_depth'][1]
+
+                return {'b_fake': out}
+
             else:
-                raise ValueError("Unknown prediction methods")
+                out = self.forward(data)
 
-            out = pred_depth
-            return {'b_fake': out}
+                if cfg.MODEL.PREDICTION_METHOD == 'classification':
+                    pred_depth = bins_to_depth(out['b_fake_softmax'])
+                elif cfg.MODEL.PREDICTION_METHOD == 'regression':
+                    # for regression methods
+                    pred_depth = torch.nn.functional.sigmoid(out['b_fake_logit'])
+                else:
+                    raise ValueError("Unknown prediction methods")
 
-
-    # def inference(self, data):
-    #
-    #     with torch.no_grad():
-    #             out = self.forward(data)['refined_depth'][1]
-    #
-    #             return {'b_fake': out}
+                out = pred_depth
+                return {'b_fake': out}
 
 
 
@@ -86,18 +96,11 @@ class ModelLoss(object):
         self.virtual_normal_loss = VNL_Loss(focal_x=cfg.DATASET.FOCAL_X, focal_y=cfg.DATASET.FOCAL_Y, input_size=cfg.DATASET.CROP_SIZE)
         # self.rd_loss=RD_loss9()
 
-        # self.refine_loss=Refine_loss()
-
     def criterion(self, pred_softmax, pred_logit, data, epoch):
         pred_depth = bins_to_depth(pred_softmax)
         loss_metric = self.weight_cross_entropy_loss(pred_logit, data['B_bins'], data['B'].cuda())
         loss_normal = self.virtual_normal_loss(data['B'].cuda(), pred_depth)
         # rd_loss=self.rd_loss(pred_depth,data['B'].cuda())
-
-
-        # rf_loss = self.refine_loss(refined_depth, data['B'].cuda())
-        # rd_loss = self.rd_loss(refined_depth, data['B'].cuda())
-
 
         loss = {}
         loss['metric_loss'] = loss_metric
@@ -107,6 +110,43 @@ class ModelLoss(object):
         loss['total_loss'] = loss['metric_loss'] + loss['virtual_normal_loss']
         # loss['total_loss'] = loss['metric_loss'] + loss['rd_loss']
         return loss
+
+
+class LossForRefine(object):
+    def __init__(self):
+        super(LossForRefine, self).__init__()
+
+        self.rd_loss=RD_loss9()
+        self.refine_loss=Refine_loss()
+        self.l1_loss=torch.nn.L1Loss(reduction='mean')
+
+    def criterion(self, refined_depth, data):
+
+        rf_loss = self.refine_loss(refined_depth, data['B'].cuda())
+
+        mask=(data['B']>0.00001).float()
+        # mask=torchvision.transforms.ToPILImage()(mask[0])
+        # mask.show()
+
+        l1loss=self.l1_loss(refined_depth[0]*mask.clone().detach().to(refined_depth[0].device),data['B'].cuda()*mask.clone().detach().to(refined_depth[0].device))+\
+               self.l1_loss(refined_depth[1]*mask.clone().detach().to(refined_depth[0].device),data['B'].cuda()*mask.clone().detach().to(refined_depth[0].device))
+        rd_loss = self.rd_loss(refined_depth[0]*mask.clone().detach().to(refined_depth[0].device), data['B'].cuda()*mask.clone().detach().to(refined_depth[0].device))+ \
+                  self.rd_loss(refined_depth[1] * mask.clone().detach().to(refined_depth[0].device),data['B'].cuda() * mask.clone().detach().to(refined_depth[0].device))
+
+        loss = {}
+        loss['refine'] =rf_loss
+        loss['rd_loss'] = rd_loss * 25
+        loss['l1_loss']=l1loss*20
+
+        # print(loss['refine'])
+        # print(loss['rd_loss'])
+        # print(loss['l1_loss'])
+
+        loss['total_loss'] = loss['refine'] + loss['rd_loss']+loss['l1_loss']
+
+        return loss
+
+
 
 
 class ModelOptimizer(object):
@@ -142,6 +182,41 @@ class ModelOptimizer(object):
              'weight_decay': weight_decay},
             ]
         self.optimizer = torch.optim.SGD(net_params, momentum=0.9)
+    def optim(self, loss):
+        self.optimizer.zero_grad()
+        loss_all = loss['total_loss']
+        loss_all.backward()
+        self.optimizer.step()
+
+
+
+class RefineOptimizer(object):
+    def __init__(self, model):
+        super(RefineOptimizer, self).__init__()
+
+        rf_params=[]
+        rf_params_names=[]
+
+        for key, value in dict(model.named_parameters()).items():
+            if value.requires_grad:
+               if "refine" in key:
+                    rf_params.append(value)
+                    rf_params_names.append(key)
+
+        lr = cfg.TRAIN.BASE_LR
+
+        weight_decay = 0.0005
+
+        net_params = [
+            {'params': rf_params,
+             'lr': lr,
+             'weight_decay': weight_decay}
+            ]
+
+        # self.optimizer = torch.optim.SGD(net_params, momentum=0.9)
+        self.optimizer=torch.optim.AdamW(net_params,betas=(0.9,0.99))
+
+
     def optim(self, loss):
         self.optimizer.zero_grad()
         loss_all = loss['total_loss']

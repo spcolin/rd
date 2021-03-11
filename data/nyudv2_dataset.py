@@ -121,6 +121,8 @@ class NYUDV2Dataset():
         flip_flg = True if flip_prob > 0.5 and 'train' in self.opt.phase else False
 
         raw_size = np.array([cfg.DATASET.CROP_SIZE[1], 416, 448, 480, 512, 544, 576, 608, 640])
+        # raw_size = np.array([cfg.DATASET.CROP_SIZE[1], 416, 448, 480, cfg.DATASET.CROP_SIZE[1], 416, 448, 480, 640])
+
         size_index = np.random.randint(0, 9) if 'train' in self.opt.phase else 8
 
         # pad

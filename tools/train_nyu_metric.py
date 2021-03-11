@@ -15,6 +15,8 @@ from tools.parse_arg_val import ValOptions
 from lib.models.image_transfer import resize_image
 import random
 
+import torchvision
+
 logger = setup_logging(__name__)
 
 import sys
@@ -45,7 +47,23 @@ def train(train_dataloader, model, epoch, loss_func,
         scheduler.step()  # decay lr every iteration
         training_stats.IterTic()
         out = model(data)
-        losses = loss_func.criterion(out['b_fake_softmax'], out['b_fake_logit'], data, epoch)
+
+        # image=data['A'][0]
+        # img=torchvision.transforms.ToPILImage()(image)
+        # img.show()
+
+        # gt=data['B'][0]
+        # gt=torchvision.transforms.ToPILImage()(gt)
+        # gt.show()
+        #
+        # depth=bins_to_depth(out['b_fake_softmax'])[0]
+        # depth_img=torchvision.transforms.ToPILImage()(depth)
+        # depth_img.show()
+
+        if train_args.refine==True:
+            losses = loss_func.criterion(out['refined_depth'], data)
+        else:
+            losses = loss_func.criterion(out['b_fake_softmax'], out['b_fake_logit'], data, epoch)
         optimizer.optim(losses)
         step = base_steps + i + 1
         training_stats.UpdateIterStats(losses)
@@ -63,7 +81,7 @@ def train(train_dataloader, model, epoch, loss_func,
         if step % cfg.TRAIN.SNAPSHOT_ITERS == 0 and step != 0:
             save_ckpt(train_args, step, epoch, model, optimizer.optimizer, scheduler, val_err[0])
 
-        # break
+        break
 
 def val(val_dataloader, model):
     """
@@ -84,10 +102,10 @@ def val(val_dataloader, model):
 
 if __name__=='__main__':
 
-    torch.manual_seed(20)
-    torch.cuda.manual_seed_all(20)
-    np.random.seed(20)
-    random.seed(20)
+    # torch.manual_seed(20)
+    # torch.cuda.manual_seed_all(20)
+    # np.random.seed(20)
+    # random.seed(20)
     # torch.backends.cudnn.deterministic = True
 
 
@@ -97,8 +115,10 @@ if __name__=='__main__':
     train_args = train_opt.parse()
     # train_opt.print_options(train_args)
 
-    # train_args.load_ckpt="E:/VNL_Monocular_Depth_Prediction-master/tools/outputs/Feb10-19-16-00_DESKTOP-V6VNC56/ckpt/trained.pth"
-    # train_args.resume=True
+    # train_args.load_ckpt="E:/nyu_rawdata.pth"
+    train_args.load_ckpt="E:/rd/tools/outputs/Mar11-08-13-45_DESKTOP-V6VNC56/ckpt/epoch0_step10.pth"
+    train_args.resume=True
+    train_args.refine=True
 
     # Validation args
     val_opt = ValOptions()
@@ -133,7 +153,7 @@ if __name__=='__main__':
     cfg.TRAIN.GPU_NUM = gpu_num
 
     # load model
-    model = MetricDepthModel()
+    model = MetricDepthModel(train_args.refine)
 
     if gpu_num != -1:
         logger.info('{:>15}: {:<30}'.format('GPU_num', gpu_num))
@@ -142,8 +162,12 @@ if __name__=='__main__':
         logger.info('{:>15}: {:<30}'.format('total_iterations', total_iters))
         model.cuda()
 
-    optimizer = ModelOptimizer(model)
-    loss_func = ModelLoss()
+    if train_args.refine==True:
+        optimizer = ModelOptimizer(model)
+        loss_func=LossForRefine()
+    else:
+        optimizer = RefineOptimizer(model)
+        loss_func = ModelLoss()
 
     val_err = [{'abs_rel': 0}]
     ignore_step = -1
@@ -165,7 +189,7 @@ if __name__=='__main__':
                   val_dataloader, val_err, ignore_step)
             ignore_step = -1
 
-            # break
+            break
 
     except (RuntimeError, KeyboardInterrupt):
 
